@@ -4,16 +4,22 @@ name: Build AURA APK
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches:
+      - main
+
+permissions:
+  contents: read
 
 jobs:
   build:
+    name: Build Android APK
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout
+      - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Setup Java
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -24,15 +30,23 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Extract Android project
-        run: unzip -o AURA-Android-source.zip -d source
+      - name: Extract project
+        run: |
+          unzip -o AURA-Android-source.zip -d source
+          test -f source/app/build.gradle
 
-      - name: Build APK
+      - name: Configure Android version
+        run: |
+          sed -i "s/targetSdk 28/targetSdk 35/" source/app/build.gradle
+          sed -i "s/versionCode 1/versionCode 2/" source/app/build.gradle
+
+      - name: Build debug APK
         working-directory: source
         run: gradle assembleDebug
 
-      - name: Save APK
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: AURA-APK
+          name: AURA-APK-v2
           path: source/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
