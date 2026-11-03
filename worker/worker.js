@@ -1,73 +1,98 @@
+
+const MODEL = "gemini-3.1-flash-lite";
+
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+  "Content-Type": "application/json; charset=utf-8"
+};
+
+function send(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: CORS_HEADERS
+  });
+}
+
 export default {
   async fetch(request, env) {
-    const cors = {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type"
-    };
-
     if (request.method === "OPTIONS") {
-      return new Response(null, { headers: cors });
+      return new Response(null, {
+        status: 204,
+        headers: CORS_HEADERS
+      });
     }
 
     if (request.method !== "POST") {
-      return Response.json(
-        { error: "Only POST requests are allowed" },
-        { status: 405, headers: cors }
-      );
+      return send({ error: "Only POST requests are allowed" }, 405);
+    }
+
+    if (!env.GEMINI_API_KEY) {
+      return send({ error: "GEMINI_API_KEY secret is missing" }, 500);
     }
 
     try {
       const body = await request.json();
-      const message = String(body.message || "").trim();
+      const message = body.message;
 
-      if (!message) {
-        return Response.json(
-          { error: "Message is empty" },
-          { status: 400, headers: cors }
-        );
+      if (typeof message !== "string" || !message.trim()) {
+        return send({ error: "Please provide a valid message" }, 400);
       }
 
-      const response = await fetch(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" +
-          encodeURIComponent(env.GEMINI_API_KEY),
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            systemInstruction: {
-              parts: [{
-                text: "You are AURA, a helpful personal AI assistant. Reply naturally in Hindi when the user speaks Hindi and in English when the user speaks English. Keep answers clear and useful."
-              }]
-            },
-            contents: [{
-              parts: [{ text: message }]
-            }]
-          })
-        }
-      );
+      const apiUrl =
+        `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${encodeURIComponent(env.GEMINI_API_KEY)}`;
 
-      const data = await response.json();
+      const response = await fetch(apiUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          system_instruction: {
+            parts: [{
+              text: "You are AURA, a helpful personal AI assistant. Reply in Hindi when the user speaks Hindi and in English when the user speaks English. Keep answers clear, natural and useful."
+            }]
+          },
+          contents: [{
+            role: "user",
+            parts: [{ text: message.trim() }]
+          }],
+          generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 1024
+          }
+        })
+      });
+
+      const result = await response.json();
 
       if (!response.ok) {
-        return Response.json(
-          { error: data.error?.message || "AI service error" },
-          { status: response.status, headers: cors }
-        );
+        return send({
+          error: "Gemini API error",
+          details: result.error?.message || "Unknown API error"
+        }, response.status);
       }
 
-      const reply =
-        data.candidates?.[0]?.content?.parts?.[0]?.text ||
-        "माफ कीजिए, अभी जवाब नहीं मिल पाया।";
+      const reply = result.candidates?.[0]?.content?.parts
+        ?.map(part => part.text || "")
+        .join("")
+        .trim();
 
-      return Response.json({ reply }, { headers: cors });
+      if (!reply) {
+        return send({
+          error: "AI did not return a response",
+          details: result.promptFeedback?.blockReason || "Empty response"
+        }, 502);
+      }
+
+      return send({ reply });
 
     } catch (error) {
-      return Response.json(
-        { error: "Server error: " + error.message },
-        { status: 500, headers: cors }
-      );
+      return send({
+        error: "Server error",
+        details: error.message || "Unknown error"
+      }, 500);
     }
   }
 };
-
